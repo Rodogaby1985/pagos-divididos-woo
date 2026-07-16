@@ -211,7 +211,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             echo '<p><label>' . esc_html__('Ciudad', 'pdw') . '<br><input required type="text" name="billing_city" /></label></p>';
             echo '<p><label>' . esc_html__('Provincia/Estado', 'pdw') . '<br><input type="text" name="billing_state" /></label></p>';
             echo '<p><label>' . esc_html__('Código postal', 'pdw') . '<br><input required type="text" name="billing_postcode" /></label></p>';
-            echo '<p><label>' . esc_html__('País (ISO2)', 'pdw') . '<br><input required type="text" name="billing_country" value="AR" /></label></p>';
+            echo '<p><label>' . esc_html__('País', 'pdw') . '<br><input required type="text" name="billing_country" value="AR" readonly /></label></p>';
             echo '<button type="submit" class="button alt">' . esc_html__('Crear y pagar productos', 'pdw') . '</button>';
             echo '</form>';
         }
@@ -287,6 +287,16 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             }
 
             $action = sanitize_key(wp_unslash($_POST['pdw_action']));
+            $nonce = isset($_POST['_pdw_nonce']) ? sanitize_text_field(wp_unslash($_POST['_pdw_nonce'])) : '';
+            $nonce_actions = [
+                'create_products_order' => 'pdw_create_products_order',
+                'create_shipping_order' => 'pdw_create_shipping_order',
+                'confirm_order' => 'pdw_confirm_order',
+            ];
+
+            if (! isset($nonce_actions[$action]) || '' === $nonce || ! wp_verify_nonce($nonce, $nonce_actions[$action])) {
+                return;
+            }
 
             if ('create_products_order' === $action) {
                 self::handle_create_products_order();
@@ -302,8 +312,6 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
         }
 
         private static function handle_create_products_order(): void {
-            check_admin_referer('pdw_create_products_order', '_pdw_nonce');
-
             if (WC()->cart->is_empty()) {
                 return;
             }
@@ -312,12 +320,6 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             if ($existing instanceof WC_Order) {
                 wp_safe_redirect($existing->get_checkout_payment_url());
                 exit;
-            }
-
-            $order = wc_create_order();
-            foreach (WC()->cart->get_cart() as $item) {
-                $product = $item['data'];
-                $order->add_product($product, (int) $item['quantity']);
             }
 
             $address = [
@@ -331,6 +333,25 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 'postcode'   => sanitize_text_field(wp_unslash($_POST['billing_postcode'] ?? '')),
                 'country'    => strtoupper(sanitize_text_field(wp_unslash($_POST['billing_country'] ?? ''))),
             ];
+
+            $required_fields = ['first_name', 'last_name', 'email', 'phone', 'address_1', 'city', 'postcode', 'country'];
+            foreach ($required_fields as $field_key) {
+                if ('' === $address[$field_key]) {
+                    wc_add_notice(__('Completá todos los datos requeridos para continuar.', 'pdw'), 'error');
+                    return;
+                }
+            }
+
+            if (! WC()->countries->country_exists($address['country'])) {
+                wc_add_notice(__('El país ingresado no es válido.', 'pdw'), 'error');
+                return;
+            }
+
+            $order = wc_create_order();
+            foreach (WC()->cart->get_cart() as $item) {
+                $product = $item['data'];
+                $order->add_product($product, (int) $item['quantity']);
+            }
 
             $order->set_address($address, 'billing');
             $order->set_address($address, 'shipping');
@@ -347,7 +368,6 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
         }
 
         private static function handle_create_shipping_order(): void {
-            check_admin_referer('pdw_create_shipping_order', '_pdw_nonce');
             $product_order = self::get_product_order_from_session();
 
             if (! $product_order instanceof WC_Order) {
@@ -361,9 +381,17 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             $existing_shipping_order_id = (int) $product_order->get_meta('_pdw_shipping_order_id');
             if ($existing_shipping_order_id > 0) {
                 $existing_shipping_order = wc_get_order($existing_shipping_order_id);
-                if ($existing_shipping_order instanceof WC_Order && ! $existing_shipping_order->has_status(['failed', 'cancelled'])) {
-                    wp_safe_redirect($existing_shipping_order->get_checkout_payment_url());
-                    exit;
+                if ($existing_shipping_order instanceof WC_Order) {
+                    if ($existing_shipping_order->is_paid()) {
+                        $product_order->update_meta_data('_pdw_shipping_payment_status', 'paid');
+                        $product_order->save();
+                        return;
+                    }
+
+                    if ($existing_shipping_order->needs_payment() || $existing_shipping_order->has_status(['pending', 'on-hold'])) {
+                        wp_safe_redirect($existing_shipping_order->get_checkout_payment_url());
+                        exit;
+                    }
                 }
             }
 
@@ -402,7 +430,6 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
         }
 
         private static function handle_confirm_order(): void {
-            check_admin_referer('pdw_confirm_order', '_pdw_nonce');
             $settings = self::get_settings();
             $product_order = self::get_product_order_from_session();
 
@@ -425,7 +452,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 $target_status = $product_order->needs_processing() ? 'processing' : 'completed';
                 $product_order->update_status($target_status, __('Pago de productos y envío confirmado en checkout dividido.', 'pdw'));
             } else {
-                $product_order->update_status('on-hold', __('Coordinar envío', 'pdw') . ': ' . $settings['contact_text']);
+                $product_order->update_status('on-hold', self::build_shipping_coordination_note($settings['contact_text']));
             }
 
             $product_order->update_meta_data('_pdw_finalized', 'yes');
@@ -519,10 +546,14 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 }
 
                 $parent_order->update_meta_data('_pdw_shipping_payment_status', 'failed');
-                $parent_order->update_status('on-hold', __('Coordinar envío', 'pdw') . ': ' . $settings['contact_text']);
+                $parent_order->update_status('on-hold', self::build_shipping_coordination_note($settings['contact_text']));
                 $parent_order->add_order_note(__('Pago de envío fallido. Coordinar envío con cliente.', 'pdw'));
                 $parent_order->save();
             }
+        }
+
+        private static function build_shipping_coordination_note(string $contact_text): string {
+            return __('Coordinar envío', 'pdw') . ': ' . $contact_text;
         }
 
         private static function get_product_order_from_session(): ?WC_Order {
@@ -574,14 +605,14 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 $packages[0]['contents_cost'] += (float) $item->get_total();
             }
 
-            $calculated = WC()->shipping()->calculate_shipping($packages);
+            $calculated_packages = WC()->shipping()->calculate_shipping($packages);
             $rates = [];
 
-            if (empty($calculated[0]['rates'])) {
+            if (empty($calculated_packages[0]['rates'])) {
                 return [];
             }
 
-            foreach ($calculated[0]['rates'] as $rate_id => $rate) {
+            foreach ($calculated_packages[0]['rates'] as $rate_id => $rate) {
                 $rates[$rate_id] = [
                     'label' => $rate->get_label(),
                     'cost' => (float) $rate->get_cost(),
