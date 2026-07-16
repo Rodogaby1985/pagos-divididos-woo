@@ -211,7 +211,11 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             echo '<p><label>' . esc_html__('Ciudad', 'pdw') . '<br><input required type="text" name="billing_city" /></label></p>';
             echo '<p><label>' . esc_html__('Provincia/Estado', 'pdw') . '<br><input type="text" name="billing_state" /></label></p>';
             echo '<p><label>' . esc_html__('Código postal', 'pdw') . '<br><input required type="text" name="billing_postcode" /></label></p>';
-            echo '<p><label>' . esc_html__('País', 'pdw') . '<br><input required type="text" name="billing_country" value="AR" readonly /></label></p>';
+            echo '<p><label for="pdw_billing_country">' . esc_html__('País', 'pdw') . '</label><br><select required id="pdw_billing_country" name="billing_country">';
+            foreach (WC()->countries->get_countries() as $country_code => $country_name) {
+                echo '<option value="' . esc_attr($country_code) . '" ' . selected('AR', $country_code, false) . '>' . esc_html($country_name) . '</option>';
+            }
+            echo '</select></p>';
             echo '<button type="submit" class="button alt">' . esc_html__('Crear y pagar productos', 'pdw') . '</button>';
             echo '</form>';
         }
@@ -241,11 +245,12 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             wp_nonce_field('pdw_create_shipping_order', '_pdw_nonce');
             echo '<input type="hidden" name="pdw_action" value="create_shipping_order" />';
 
+            $index = 0;
             foreach ($rates as $rate_id => $rate_data) {
-                echo '<p><label>';
-                echo '<input required type="radio" name="shipping_rate_id" value="' . esc_attr($rate_id) . '" /> ';
-                echo esc_html($rate_data['label']) . ' - ' . wp_kses_post(wc_price((float) $rate_data['cost']));
-                echo '</label></p>';
+                $input_id = 'pdw_shipping_rate_' . $index;
+                echo '<p><input required id="' . esc_attr($input_id) . '" type="radio" name="shipping_rate_id" value="' . esc_attr($rate_id) . '" /> ';
+                echo '<label for="' . esc_attr($input_id) . '">' . esc_html($rate_data['label']) . ' - ' . wp_kses_post(wc_price((float) $rate_data['cost'])) . '</label></p>';
+                $index++;
             }
 
             echo '<button type="submit" class="button alt">' . esc_html__('Crear y pagar envío', 'pdw') . '</button>';
@@ -295,6 +300,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             ];
 
             if (! isset($nonce_actions[$action]) || '' === $nonce || ! wp_verify_nonce($nonce, $nonce_actions[$action])) {
+                wc_add_notice(__('Tu sesión expiró. Por favor intentá nuevamente.', 'pdw'), 'error');
                 return;
             }
 
@@ -335,11 +341,33 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             ];
 
             $required_fields = ['first_name', 'last_name', 'email', 'phone', 'address_1', 'city', 'postcode', 'country'];
+            $field_labels = [
+                'first_name' => __('Nombre', 'pdw'),
+                'last_name' => __('Apellido', 'pdw'),
+                'email' => __('Email', 'pdw'),
+                'phone' => __('Teléfono', 'pdw'),
+                'address_1' => __('Dirección', 'pdw'),
+                'city' => __('Ciudad', 'pdw'),
+                'postcode' => __('Código postal', 'pdw'),
+                'country' => __('País', 'pdw'),
+            ];
+            $missing_fields = [];
             foreach ($required_fields as $field_key) {
                 if ('' === $address[$field_key]) {
-                    wc_add_notice(__('Completá todos los datos requeridos para continuar.', 'pdw'), 'error');
-                    return;
+                    $missing_fields[] = $field_labels[$field_key];
                 }
+            }
+
+            if (! empty($missing_fields)) {
+                wc_add_notice(
+                    sprintf(
+                        /* translators: %s: missing billing fields */
+                        __('Completá los siguientes campos: %s.', 'pdw'),
+                        implode(', ', $missing_fields)
+                    ),
+                    'error'
+                );
+                return;
             }
 
             if (! WC()->countries->country_exists($address['country'])) {
@@ -605,14 +633,14 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 $packages[0]['contents_cost'] += (float) $item->get_total();
             }
 
-            $calculated_packages = WC()->shipping()->calculate_shipping($packages);
+            WC()->shipping()->calculate_shipping($packages);
             $rates = [];
 
-            if (empty($calculated_packages[0]['rates'])) {
+            if (empty($packages) || ! isset($packages[0]['rates']) || empty($packages[0]['rates'])) {
                 return [];
             }
 
-            foreach ($calculated_packages[0]['rates'] as $rate_id => $rate) {
+            foreach ($packages[0]['rates'] as $rate_id => $rate) {
                 $rates[$rate_id] = [
                     'label' => $rate->get_label(),
                     'cost' => (float) $rate->get_cost(),
