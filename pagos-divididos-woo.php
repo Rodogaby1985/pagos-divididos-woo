@@ -299,7 +299,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 'confirm_order' => 'pdw_confirm_order',
             ];
 
-            if (! isset($nonce_actions[$action]) || '' === $nonce || ! wp_verify_nonce($nonce, $nonce_actions[$action])) {
+            if (! isset($nonce_actions[$action]) || ! wp_verify_nonce($nonce, $nonce_actions[$action])) {
                 wc_add_notice(__('Tu sesión expiró. Por favor intentá nuevamente.', 'pdw'), 'error');
                 return;
             }
@@ -328,6 +328,9 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 exit;
             }
 
+            $country = sanitize_text_field(wp_unslash($_POST['billing_country'] ?? ''));
+            $country = function_exists('wc_strtoupper') ? wc_strtoupper($country) : strtoupper($country);
+
             $address = [
                 'first_name' => sanitize_text_field(wp_unslash($_POST['billing_first_name'] ?? '')),
                 'last_name'  => sanitize_text_field(wp_unslash($_POST['billing_last_name'] ?? '')),
@@ -337,7 +340,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 'city'       => sanitize_text_field(wp_unslash($_POST['billing_city'] ?? '')),
                 'state'      => sanitize_text_field(wp_unslash($_POST['billing_state'] ?? '')),
                 'postcode'   => sanitize_text_field(wp_unslash($_POST['billing_postcode'] ?? '')),
-                'country'    => strtoupper(sanitize_text_field(wp_unslash($_POST['billing_country'] ?? ''))),
+                'country'    => $country,
             ];
 
             $required_fields = ['first_name', 'last_name', 'email', 'phone', 'address_1', 'city', 'postcode', 'country'];
@@ -376,6 +379,11 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             }
 
             $order = wc_create_order();
+            if (! $order instanceof WC_Order) {
+                wc_add_notice(__('No se pudo crear la orden de productos. Intentá nuevamente.', 'pdw'), 'error');
+                return;
+            }
+
             foreach (WC()->cart->get_cart() as $item) {
                 $product = $item['data'];
                 $order->add_product($product, (int) $item['quantity']);
@@ -432,6 +440,10 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
 
             $selected = $rates[$shipping_rate_id];
             $shipping_order = wc_create_order();
+            if (! $shipping_order instanceof WC_Order) {
+                wc_add_notice(__('No se pudo crear la orden de envío. Intentá nuevamente.', 'pdw'), 'error');
+                return;
+            }
 
             $shipping_order->set_address($product_order->get_address('billing'), 'billing');
             $shipping_order->set_address($product_order->get_address('shipping'), 'shipping');
@@ -636,7 +648,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             WC()->shipping()->calculate_shipping($packages);
             $rates = [];
 
-            if (empty($packages) || ! isset($packages[0]['rates']) || empty($packages[0]['rates'])) {
+            if (! isset($packages[0]['rates']) || empty($packages[0]['rates'])) {
                 return [];
             }
 
