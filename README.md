@@ -5,7 +5,7 @@ Plugin de WooCommerce para checkout dividido en 3 pasos para Frankie Lencería.
 ## Instalación
 
 1. Copiar este repositorio dentro de `wp-content/plugins/pagos-divididos-woo`.
-2. Activar **Pagos Divididos Woo** desde el admin de WordPress.
+2. Activar **Pagos Divididos Woo** desde el panel de administración de WordPress.
 3. Verificar que WooCommerce esté activo.
 4. Crear una página e insertar el shortcode:
    - `[pdw_checkout_dividido]`

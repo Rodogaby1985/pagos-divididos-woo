@@ -245,12 +245,12 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             wp_nonce_field('pdw_create_shipping_order', '_pdw_nonce');
             echo '<input type="hidden" name="pdw_action" value="create_shipping_order" />';
 
-            $index = 0;
+            $rate_index = 0;
             foreach ($rates as $rate_id => $rate_data) {
-                $input_id = 'pdw_shipping_rate_' . $index;
+                $input_id = 'pdw_shipping_rate_' . $rate_index;
                 echo '<p><input required id="' . esc_attr($input_id) . '" type="radio" name="shipping_rate_id" value="' . esc_attr($rate_id) . '" /> ';
                 echo '<label for="' . esc_attr($input_id) . '">' . esc_html($rate_data['label']) . ' - ' . wp_kses_post(wc_price((float) $rate_data['cost'])) . '</label></p>';
-                $index++;
+                $rate_index++;
             }
 
             echo '<button type="submit" class="button alt">' . esc_html__('Crear y pagar envío', 'pdw') . '</button>';
@@ -328,8 +328,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 exit;
             }
 
-            $country = sanitize_text_field(wp_unslash($_POST['billing_country'] ?? ''));
-            $country = function_exists('wc_strtoupper') ? wc_strtoupper($country) : strtoupper($country);
+            $country = wc_strtoupper(sanitize_text_field(wp_unslash($_POST['billing_country'] ?? '')));
 
             $address = [
                 'first_name' => sanitize_text_field(wp_unslash($_POST['billing_first_name'] ?? '')),
@@ -435,6 +434,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             $rates = self::get_shipping_rates_from_product_order($product_order);
 
             if (! isset($rates[$shipping_rate_id])) {
+                wc_add_notice(__('El método de envío seleccionado ya no está disponible. Elegí otro método.', 'pdw'), 'error');
                 return;
             }
 
@@ -619,7 +619,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 'contents' => [],
                 'contents_cost' => 0,
                 'applied_coupons' => [],
-                'user' => ['ID' => get_current_user_id()],
+                'user' => ['ID' => (int) $product_order->get_customer_id()],
                 'destination' => [
                     'country' => $product_order->get_shipping_country(),
                     'state' => $product_order->get_shipping_state(),
