@@ -69,6 +69,50 @@ Ruta: **WooCommerce > Checkout dividido**
 ## Supuestos técnicos
 
 - No se usa endpoint externo.
-- Paso 1 reutiliza WooCommerce (`order-pay`) para gateways estándar.
+- Paso 1 llama directamente a `process_payment()` del gateway seleccionado (sin pasar por `order-pay`).
 - Paso 2 usa pasarela específica configurable para credenciales/cuenta separada.
 - El checkout estándar de WooCommerce no se modifica si el modo dividido está desactivado.
+
+## Changelog
+
+### v0.1.1 — HOTFIX: Flujo Paso 1 "PAGAR PRODUCTOS" (loop silencioso)
+
+**Causa del bug:**  
+Al crear la orden de productos, el plugin redirigía al endpoint estándar de WooCommerce
+`/checkout/order-pay/{order_id}/`. Esa pantalla requiere que el usuario elija gateway y envíe
+el formulario. Si el gateway devolvía un error o no había ninguno disponible, la página se
+recargaba en silencio, generando un loop: la orden quedaba en `pending payment` y el usuario
+no avanzaba.
+
+**Corrección aplicada:**
+
+1. Se reemplazó la redirección a `order-pay` por una llamada directa a `process_payment()`:
+   - Se selecciona automáticamente el primer gateway activo en WooCommerce (excluyendo la
+     pasarela reservada para envío).
+   - Se asigna el gateway a la orden (`set_payment_method`) antes de procesarla.
+   - Si `process_payment()` devuelve `success + redirect`, se redirige al usuario a la
+     pasarela.
+   - Si no hay gateway elegible, se muestra un error claro:
+     _"No hay método de pago configurado para productos. Por favor, contactá al administrador."_
+   - Si `process_payment()` falla o no devuelve redirect, se muestra un error accionable
+     (sin recargar en silencio).
+
+2. El botón "PAGAR PRODUCTOS" del estado pendiente pasa de ser un `<a>` (link a `order-pay`)
+   a un formulario POST que vuelve a ejecutar el flujo de pago directo.
+
+3. Se agregan logs WooCommerce (`WooCommerce > Estado > Logs`, fuente `pdw`) con:
+   - `order_id`
+   - Gateway elegido
+   - Resultado de `process_payment()`
+   - URL de redirect devuelta
+
+## Habilitar logging para diagnóstico en producción
+
+1. Ir a **WooCommerce > Estado > Logs**.
+2. Filtrar por fuente: `pdw`.
+3. Los registros incluyen nivel `info` (flujo normal) y `error` (problemas de gateway).
+4. Para aumentar verbosidad de WooCommerce en general, podés agregar en `wp-config.php`:
+   ```php
+   define( 'WC_LOG_THRESHOLD', 'debug' );
+   ```
+   _(Recomendado solo en staging; deshabilitar en producción cuando no sea necesario.)_

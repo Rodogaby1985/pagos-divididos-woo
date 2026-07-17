@@ -171,7 +171,11 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 echo '<h3>Paso 1: Pago de productos</h3>';
                 echo '<p>' . esc_html($settings['step1_notice']) . '</p>';
                 echo '<p>' . esc_html__('Tu pedido de productos está pendiente de pago.', 'pdw') . '</p>';
-                echo '<a class="button" href="' . esc_url($product_order->get_checkout_payment_url()) . '">' . esc_html__('Pagar productos', 'pdw') . '</a>';
+                echo '<form method="post">';
+                wp_nonce_field('pdw_retry_products_payment', '_pdw_nonce');
+                echo '<input type="hidden" name="pdw_action" value="retry_products_payment" />';
+                echo '<button type="submit" class="button alt">' . esc_html__('Pagar productos', 'pdw') . '</button>';
+                echo '</form>';
                 return (string) ob_get_clean();
             }
 
@@ -295,6 +299,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             $nonce = isset($_POST['_pdw_nonce']) ? sanitize_text_field(wp_unslash($_POST['_pdw_nonce'])) : '';
             $nonce_actions = [
                 'create_products_order' => 'pdw_create_products_order',
+                'retry_products_payment' => 'pdw_retry_products_payment',
                 'create_shipping_order' => 'pdw_create_shipping_order',
                 'confirm_order' => 'pdw_confirm_order',
             ];
@@ -306,6 +311,10 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
 
             if ('create_products_order' === $action) {
                 self::handle_create_products_order();
+            }
+
+            if ('retry_products_payment' === $action) {
+                self::handle_retry_products_payment();
             }
 
             if ('create_shipping_order' === $action) {
@@ -324,8 +333,11 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
 
             $existing = self::get_product_order_from_session();
             if ($existing instanceof WC_Order) {
-                wp_safe_redirect($existing->get_checkout_payment_url());
-                exit;
+                if ('paid' === (string) $existing->get_meta('_pdw_products_payment_status')) {
+                    return;
+                }
+                self::process_products_payment($existing);
+                return;
             }
 
             $country = wc_strtoupper(sanitize_text_field(wp_unslash($_POST['billing_country'] ?? '')));
@@ -398,7 +410,119 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             $order->save();
 
             WC()->session->set(self::SESSION_PRODUCT_ORDER, $order->get_id());
-            wp_safe_redirect($order->get_checkout_payment_url());
+            self::process_products_payment($order);
+        }
+
+        private static function handle_retry_products_payment(): void {
+            $order = self::get_product_order_from_session();
+            if (! $order instanceof WC_Order) {
+                wc_add_notice(__('No se encontró el pedido. Por favor, intentá nuevamente desde el inicio.', 'pdw'), 'error');
+                return;
+            }
+
+            if ('paid' === (string) $order->get_meta('_pdw_products_payment_status')) {
+                return;
+            }
+
+            self::process_products_payment($order);
+        }
+
+        private static function get_product_gateway(): ?WC_Payment_Gateway {
+            $settings = self::get_settings();
+            $shipping_gateway_id = (string) $settings['shipping_gateway_id'];
+
+            $all_gateways = WC()->payment_gateways()->payment_gateways();
+            $available = [];
+
+            foreach ($all_gateways as $id => $gateway) {
+                if ('yes' !== $gateway->enabled) {
+                    continue;
+                }
+                if ('' !== $shipping_gateway_id && $id === $shipping_gateway_id) {
+                    continue;
+                }
+                $available[$id] = $gateway;
+            }
+
+            if (empty($available)) {
+                return null;
+            }
+
+            // Use the first enabled gateway in WooCommerce's configured order.
+            // Merchants control gateway priority from WooCommerce > Settings > Payments.
+            return reset($available);
+        }
+
+        private static function process_products_payment(WC_Order $order): void {
+            $gateway = self::get_product_gateway();
+            $logger = wc_get_logger();
+
+            if (null === $gateway) {
+                $logger->error(
+                    sprintf('PDW Paso 1: No hay gateway de productos disponible para order #%d.', $order->get_id()),
+                    ['source' => 'pdw']
+                );
+                wc_add_notice(__('No hay método de pago configurado para productos. Por favor, contactá al administrador.', 'pdw'), 'error');
+                return;
+            }
+
+            $order->set_payment_method($gateway->id);
+            $order->set_payment_method_title($gateway->get_title());
+            $order->save();
+
+            $logger->info(
+                sprintf('PDW Paso 1: Iniciando pago de productos para order #%d con gateway "%s".', $order->get_id(), $gateway->id),
+                ['source' => 'pdw']
+            );
+
+            try {
+                $result = $gateway->process_payment($order->get_id());
+            } catch (Throwable $e) {
+                $logger->error(
+                    sprintf('PDW Paso 1: Excepción en process_payment para order #%d con gateway "%s": %s', $order->get_id(), $gateway->id, $e->getMessage()),
+                    ['source' => 'pdw']
+                );
+                wc_add_notice(__('Error al procesar el pago de productos. Por favor, intentá nuevamente.', 'pdw'), 'error');
+                return;
+            }
+
+            $logger->info(
+                sprintf(
+                    'PDW Paso 1: Resultado de process_payment para order #%d con gateway "%s": result=%s, redirect=%s',
+                    $order->get_id(),
+                    $gateway->id,
+                    is_array($result) ? sanitize_text_field($result['result'] ?? '') : 'N/A',
+                    is_array($result) ? esc_url_raw($result['redirect'] ?? '') : 'N/A'
+                ),
+                ['source' => 'pdw']
+            );
+
+            if (! is_array($result) || 'success' !== ($result['result'] ?? '')) {
+                $logger->error(
+                    sprintf('PDW Paso 1: process_payment no devolvió success para order #%d con gateway "%s".', $order->get_id(), $gateway->id),
+                    ['source' => 'pdw']
+                );
+                wc_add_notice(__('No se pudo iniciar el pago de productos. Por favor, intentá nuevamente o contactá al administrador.', 'pdw'), 'error');
+                return;
+            }
+
+            $redirect = trim((string) ($result['redirect'] ?? ''));
+
+            if ('' === $redirect) {
+                $logger->error(
+                    sprintf('PDW Paso 1: process_payment no devolvió redirect para order #%d con gateway "%s".', $order->get_id(), $gateway->id),
+                    ['source' => 'pdw']
+                );
+                wc_add_notice(__('El método de pago no devolvió una URL de redirección. Por favor, intentá nuevamente.', 'pdw'), 'error');
+                return;
+            }
+
+            $logger->info(
+                sprintf('PDW Paso 1: Redirigiendo order #%d a gateway "%s": %s', $order->get_id(), $gateway->id, $redirect),
+                ['source' => 'pdw']
+            );
+
+            wp_safe_redirect($redirect);
             exit;
         }
 
