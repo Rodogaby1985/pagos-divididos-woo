@@ -530,7 +530,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 return;
             }
 
-            if (false !== strpos($redirect, 'order-received') && ! $order->is_paid()) {
+            if (self::is_order_received_redirect($redirect) && ! $order->is_paid()) {
                 $logger->error(
                     sprintf(
                         'PDW Paso 1: Rechazado redirect a order-received para order #%d con gateway "%s". Motivo: orden sin pago confirmado. redirect=%s',
@@ -565,12 +565,28 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
 
             $redirect = trim((string) ($result['redirect'] ?? ''));
             if ('' !== $redirect) {
-                $summary['redirect_host'] = sanitize_text_field((string) wp_parse_url($redirect, PHP_URL_HOST));
-                $summary['redirect_path'] = sanitize_text_field((string) wp_parse_url($redirect, PHP_URL_PATH));
+                $redirect_host = wp_parse_url($redirect, PHP_URL_HOST);
+                if (is_string($redirect_host) && '' !== $redirect_host) {
+                    $summary['redirect_host'] = sanitize_text_field($redirect_host);
+                }
+
+                $redirect_path = wp_parse_url($redirect, PHP_URL_PATH);
+                if (is_string($redirect_path) && '' !== $redirect_path) {
+                    $summary['redirect_path'] = sanitize_text_field($redirect_path);
+                }
             }
 
             $json = wp_json_encode($summary);
             return false === $json ? 'json_encode_error' : $json;
+        }
+
+        private static function is_order_received_redirect(string $redirect): bool {
+            $redirect_path = wp_parse_url($redirect, PHP_URL_PATH);
+            if (! is_string($redirect_path) || '' === $redirect_path) {
+                return false;
+            }
+
+            return false !== strpos($redirect_path, '/order-received/');
         }
 
         private static function handle_create_shipping_order(): void {
