@@ -94,7 +94,7 @@ sin una aprobación de pago real, mostrando avance incorrecto.
      se rechaza y se informa error al usuario.
 3. UX de error explícita:
    - Mensaje visible al usuario cuando falla inicio de pago:
-     - _"No fue posible iniciar el pago de productos. Intenta nuevamente o contacta soporte."_
+     - _"No fue posible iniciar el pago de productos. Intentá nuevamente o contactá soporte."_
    - Mensaje explícito cuando no existe pasarela elegible para productos.
 4. Logging de diagnóstico (fuente `pdw`):
    - `info` al iniciar pago y registrar resumen sanitizado de `process_payment`.

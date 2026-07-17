@@ -553,6 +553,11 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             exit;
         }
 
+        /**
+         * Build a sanitized summary of gateway process_payment responses for logs.
+         *
+         * @param mixed $result Raw gateway result.
+         */
         private static function summarize_payment_result($result): string {
             if (! is_array($result)) {
                 return 'type=' . gettype($result);
@@ -580,6 +585,9 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             return false === $json ? 'json_encode_error' : $json;
         }
 
+        /**
+         * Check whether a redirect URL points to WooCommerce order-received endpoint.
+         */
         private static function is_order_received_redirect(string $redirect): bool {
             $redirect_path = wp_parse_url($redirect, PHP_URL_PATH);
             if (! is_string($redirect_path) || '' === $redirect_path) {
