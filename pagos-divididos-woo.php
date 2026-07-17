@@ -564,7 +564,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             }
 
             $summary = [
-                'keys' => array_values(array_map('sanitize_key', array_keys($result))),
+                'keys' => array_map('sanitize_key', array_keys($result)),
                 'result' => sanitize_text_field((string) ($result['result'] ?? '')),
             ];
 
@@ -594,7 +594,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 return false;
             }
 
-            return substr_count($redirect_path, '/order-received/') > 0;
+            return false !== strpos($redirect_path, '/order-received/');
         }
 
         private static function handle_create_shipping_order(): void {

@@ -102,6 +102,11 @@ sin una aprobación de pago real, mostrando avance incorrecto.
 
 **Pruebas realizadas:**
 - `php -l pagos-divididos-woo.php`
+- Verificación funcional manual del Paso 1:
+  - gateway devolviendo `result` inválido/no array
+  - gateway sin `redirect`
+  - redirect a `order-received` sin orden pagada (debe bloquearse)
+  - mensaje de error visible y opción de reintento en el flujo
 
 ### v0.1.1 — HOTFIX: Flujo Paso 1 "PAGAR PRODUCTOS" (loop silencioso)
 
