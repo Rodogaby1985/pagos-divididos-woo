@@ -75,6 +75,39 @@ Ruta: **WooCommerce > Checkout dividido**
 
 ## Changelog
 
+### v0.1.2 — HOTFIX URGENTE: Paso 1 no debe cerrar en `order-received` sin pago real
+
+**Problema reportado:**  
+En algunos intentos del Paso 1 ("PAGAR PRODUCTOS"), el flujo terminaba en `order-received`
+sin una aprobación de pago real, mostrando avance incorrecto.
+
+**Corrección aplicada:**
+
+1. Validación estricta de respuesta en Paso 1:
+   - Solo se redirige cuando `process_payment($order->get_id())` devuelve:
+     - `is_array($result)`
+     - `result === 'success'`
+     - `redirect` no vacío.
+2. Sin fallback a thank-you:
+   - No se usa fallback a `order-received`.
+   - Si el gateway devuelve redirect hacia `order-received` pero la orden aún no está pagada,
+     se rechaza y se informa error al usuario.
+3. UX de error explícita:
+   - Mensaje visible al usuario cuando falla inicio de pago:
+     - _"No fue posible iniciar el pago de productos. Intentá nuevamente o contactá soporte."_
+   - Mensaje explícito cuando no existe pasarela elegible para productos.
+4. Logging de diagnóstico (fuente `pdw`):
+   - `info` al iniciar pago y registrar resumen sanitizado de `process_payment`.
+   - `error` cuando se rechaza la respuesta, con motivo (sin exponer secretos).
+
+**Pruebas realizadas:**
+- `php -l pagos-divididos-woo.php`
+- Verificación funcional manual del Paso 1:
+  - gateway devolviendo `result` inválido/no array
+  - gateway sin `redirect`
+  - redirect a `order-received` sin orden pagada (debe bloquearse)
+  - mensaje de error visible y opción de reintento en el flujo
+
 ### v0.1.1 — HOTFIX: Flujo Paso 1 "PAGAR PRODUCTOS" (loop silencioso)
 
 **Causa del bug:**  
