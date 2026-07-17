@@ -84,7 +84,7 @@ sin una aprobación de pago real, mostrando avance incorrecto.
 **Corrección aplicada:**
 
 1. Validación estricta de respuesta en Paso 1:
-   - Solo se redirige cuando `process_payment($order_id)` devuelve:
+   - Solo se redirige cuando `process_payment($order->get_id())` devuelve:
      - `is_array($result)`
      - `result === 'success'`
      - `redirect` no vacío.
