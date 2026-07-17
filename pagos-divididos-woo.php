@@ -448,6 +448,8 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 return null;
             }
 
+            // Use the first enabled gateway in WooCommerce's configured order.
+            // Merchants control gateway priority from WooCommerce > Settings > Payments.
             return reset($available);
         }
 
@@ -475,7 +477,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
 
             try {
                 $result = $gateway->process_payment($order->get_id());
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 $logger->error(
                     sprintf('PDW Paso 1: Excepción en process_payment para order #%d con gateway "%s": %s', $order->get_id(), $gateway->id, $e->getMessage()),
                     ['source' => 'pdw']
@@ -485,7 +487,13 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
             }
 
             $logger->info(
-                sprintf('PDW Paso 1: Resultado de process_payment para order #%d con gateway "%s": %s', $order->get_id(), $gateway->id, wp_json_encode($result)),
+                sprintf(
+                    'PDW Paso 1: Resultado de process_payment para order #%d con gateway "%s": result=%s, redirect=%s',
+                    $order->get_id(),
+                    $gateway->id,
+                    is_array($result) ? sanitize_text_field($result['result'] ?? '') : 'N/A',
+                    is_array($result) ? esc_url_raw($result['redirect'] ?? '') : 'N/A'
+                ),
                 ['source' => 'pdw']
             );
 
