@@ -456,13 +456,14 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
         private static function process_products_payment(WC_Order $order): void {
             $gateway = self::get_product_gateway();
             $logger = wc_get_logger();
+            $user_error_message = __('No fue posible iniciar el pago de productos. Intenta nuevamente o contacta soporte.', 'pdw');
 
             if (null === $gateway) {
                 $logger->error(
                     sprintf('PDW Paso 1: No hay gateway de productos disponible para order #%d.', $order->get_id()),
                     ['source' => 'pdw']
                 );
-                wc_add_notice(__('No hay método de pago configurado para productos. Por favor, contactá al administrador.', 'pdw'), 'error');
+                wc_add_notice(__('No hay una pasarela elegible para el pago de productos. Contactá soporte para continuar.', 'pdw'), 'error');
                 return;
             }
 
@@ -482,38 +483,64 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                     sprintf('PDW Paso 1: Excepción en process_payment para order #%d con gateway "%s": %s', $order->get_id(), $gateway->id, $e->getMessage()),
                     ['source' => 'pdw']
                 );
-                wc_add_notice(__('Error al procesar el pago de productos. Por favor, intentá nuevamente.', 'pdw'), 'error');
+                wc_add_notice($user_error_message, 'error');
                 return;
             }
 
+            $result_summary = self::summarize_payment_result($result);
             $logger->info(
                 sprintf(
-                    'PDW Paso 1: Resultado de process_payment para order #%d con gateway "%s": result=%s, redirect=%s',
+                    'PDW Paso 1: Resultado de process_payment para order #%d con gateway "%s": %s',
                     $order->get_id(),
                     $gateway->id,
-                    is_array($result) ? sanitize_text_field($result['result'] ?? '') : 'N/A',
-                    is_array($result) ? esc_url_raw($result['redirect'] ?? '') : 'N/A'
+                    $result_summary
                 ),
                 ['source' => 'pdw']
             );
 
-            if (! is_array($result) || 'success' !== ($result['result'] ?? '')) {
+            if (! is_array($result)) {
                 $logger->error(
-                    sprintf('PDW Paso 1: process_payment no devolvió success para order #%d con gateway "%s".', $order->get_id(), $gateway->id),
+                    sprintf(
+                        'PDW Paso 1: Rechazado process_payment para order #%d con gateway "%s". Motivo: respuesta no es array. Resumen=%s',
+                        $order->get_id(),
+                        $gateway->id,
+                        $result_summary
+                    ),
                     ['source' => 'pdw']
                 );
-                wc_add_notice(__('No se pudo iniciar el pago de productos. Por favor, intentá nuevamente o contactá al administrador.', 'pdw'), 'error');
+                wc_add_notice($user_error_message, 'error');
                 return;
             }
 
+            $payment_result = sanitize_text_field((string) ($result['result'] ?? ''));
             $redirect = trim((string) ($result['redirect'] ?? ''));
 
-            if ('' === $redirect) {
+            if ('success' !== $payment_result || '' === $redirect) {
                 $logger->error(
-                    sprintf('PDW Paso 1: process_payment no devolvió redirect para order #%d con gateway "%s".', $order->get_id(), $gateway->id),
+                    sprintf(
+                        'PDW Paso 1: Rechazado process_payment para order #%d con gateway "%s". Motivo: success/redirect inválidos. result=%s redirect=%s',
+                        $order->get_id(),
+                        $gateway->id,
+                        $payment_result,
+                        '' === $redirect ? '(empty)' : esc_url_raw($redirect)
+                    ),
                     ['source' => 'pdw']
                 );
-                wc_add_notice(__('El método de pago no devolvió una URL de redirección. Por favor, intentá nuevamente.', 'pdw'), 'error');
+                wc_add_notice($user_error_message, 'error');
+                return;
+            }
+
+            if (false !== strpos($redirect, 'order-received') && ! $order->is_paid()) {
+                $logger->error(
+                    sprintf(
+                        'PDW Paso 1: Rechazado redirect a order-received para order #%d con gateway "%s". Motivo: orden sin pago confirmado. redirect=%s',
+                        $order->get_id(),
+                        $gateway->id,
+                        esc_url_raw($redirect)
+                    ),
+                    ['source' => 'pdw']
+                );
+                wc_add_notice($user_error_message, 'error');
                 return;
             }
 
@@ -524,6 +551,26 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
 
             wp_safe_redirect($redirect);
             exit;
+        }
+
+        private static function summarize_payment_result($result): string {
+            if (! is_array($result)) {
+                return 'type=' . gettype($result);
+            }
+
+            $summary = [
+                'keys' => array_values(array_map('sanitize_key', array_keys($result))),
+                'result' => sanitize_text_field((string) ($result['result'] ?? '')),
+            ];
+
+            $redirect = trim((string) ($result['redirect'] ?? ''));
+            if ('' !== $redirect) {
+                $summary['redirect_host'] = sanitize_text_field((string) wp_parse_url($redirect, PHP_URL_HOST));
+                $summary['redirect_path'] = sanitize_text_field((string) wp_parse_url($redirect, PHP_URL_PATH));
+            }
+
+            $json = wp_json_encode($summary);
+            return false === $json ? 'json_encode_error' : $json;
         }
 
         private static function handle_create_shipping_order(): void {
