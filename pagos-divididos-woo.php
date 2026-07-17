@@ -456,7 +456,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
         private static function process_products_payment(WC_Order $order): void {
             $gateway = self::get_product_gateway();
             $logger = wc_get_logger();
-            $user_error_message = __('No fue posible iniciar el pago de productos. Intenta nuevamente o contacta soporte.', 'pdw');
+            $user_error_message = __('No fue posible iniciar el pago de productos. Intentá nuevamente o contactá soporte.', 'pdw');
 
             if (null === $gateway) {
                 $logger->error(
