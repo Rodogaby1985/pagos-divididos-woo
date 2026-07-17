@@ -586,7 +586,7 @@ if (! class_exists('PDW_Split_Checkout_Plugin')) {
                 return false;
             }
 
-            return false !== strpos($redirect_path, '/order-received/');
+            return 1 === preg_match('#/order-received/#', $redirect_path);
         }
 
         private static function handle_create_shipping_order(): void {
